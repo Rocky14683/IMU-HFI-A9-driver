@@ -105,6 +105,7 @@ static void process_serial_data(uint8_t data) {
         } else {
             ROS_WARN("Failed to calibrate");
         }
+        pub_flag[0] = false;
     } else if (data_length == 20 && pub_flag.second) {
         //buffer size = 25
         if(checksum(datas, check_sum_datas)) {
@@ -115,6 +116,7 @@ static void process_serial_data(uint8_t data) {
         } else {
             ROS_WARN("Failed to calibrate");
         }
+        pub_flag[1] = false;
     } else {
         ROS_WARN("Invalid datas");
     }
