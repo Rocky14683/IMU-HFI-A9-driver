@@ -2,12 +2,11 @@
 // Created by rockychen on 7/8/24.
 //
 #include <numeric>
-#include <bits/cmathcalls.h>
-#include <tgmath.h>
+#include <memory>
+#include <serial/serial.h>
 
 #include "ros/ros.h"
 #include "cmath"
-#include "serial/serial.h"
 #include "sensor_msgs/Imu.h"
 #include "sensor_msgs/MagneticField.h"
 #include "tf2/LinearMath/Quaternion.h"
@@ -21,8 +20,10 @@ namespace global {
 };
 
 bool checksum(const std::vector<uint8_t>& list_data, const std::array<uint8_t, 2>& check_datas) {
+    printf("checksum: \n%x, %x\nsize:%lu\n", check_datas.at(0), check_datas.at(1), list_data.size());
     uint16_t crc = 0xFFFF;
     for(const uint8_t data : list_data) {
+        printf("%x\n", data);
         crc ^= data;// 16 bits
         for(int i = 0; i < 8; i++) {
             crc >>= 1;
@@ -31,7 +32,7 @@ bool checksum(const std::vector<uint8_t>& list_data, const std::array<uint8_t, 2
             }
         }
     }
-    return ((crc & 0xff) << 8 + crc >> 8) == (check_datas.at(0) << 8 | check_datas.at(1));
+    return (crc & 0xff) << 8 + (crc >> 8) == (check_datas.at(0) << 8 | check_datas.at(1));
 }
 
 std::vector<float> hex_to_float(const std::vector<uint8_t>& raw_data) {
@@ -39,7 +40,7 @@ std::vector<float> hex_to_float(const std::vector<uint8_t>& raw_data) {
     std::vector<float> vec;
     for(int i = 0; i < raw_data.size(); i+=4) {
         uint32_t data;
-        std::memcpy(&data, &raw_data[i], sizeof(data));
+        std::memcpy(&data, &raw_data[i], 4);
 
         float value = *reinterpret_cast<float*>(&data);
 
@@ -60,10 +61,20 @@ static void process_serial_data(uint8_t data) {
     sensor_msgs::Imu imu_msg{};
     sensor_msgs::MagneticField mag_msg{};
 
-    buffer.at(idx) = data;
+    if(data_ack_count > 200000) {
+        ROS_ERROR("Data error");
+        exit(-1);
+    }
+
+
+
+    buffer.push_back(data);
+
+
+    printf("%lu : %x\n", idx, data);
 
     idx++;
-    // start bits[1, 2]: aa 55
+    // start bits[0, 1]: aa 55
     // end bits[last 2 idx]: for checksum
     if(buffer.at(0) != 0xaa) {
         data_ack_count++;
@@ -79,7 +90,7 @@ static void process_serial_data(uint8_t data) {
     }
 
     // buffer[2] : length could be 20 (hex: 14) or 44 (hex: 2c)
-    const uint8_t data_length = buffer.at(2);
+    const size_t data_length = buffer.at(2);
     if(idx < buffer.at(2) + 5) {
         return;
     }
@@ -184,19 +195,24 @@ int main(int argc, char *argv[]) {
     ros::init(argc, argv, "hfi_a9_imu");
 
     ros::NodeHandle handle;
-    handle.getParam("~gra_normalization", global::enable_gra_normalize);
+    handle.getParam("/handsfree_ros_imu/gra_normalization", global::enable_gra_normalize);
+
+    std::string imu_port_string;
+    handle.getParam("/handsfree_ros_imu/imu_port", imu_port_string);
 
 
-    serial::Serial imu_serial{};
+    std::unique_ptr<serial::Serial> imu_serial = nullptr;
+
     try {
-        imu_serial = {"/dev/ttyUSB0", 921600, serial::Timeout::simpleTimeout(500)};
-        if(!imu_serial.isOpen()) {
-            imu_serial.open(); // if cant open it will throw exceptions
+        imu_serial = std::make_unique<serial::Serial>("/dev/ttyUSB0", 921600, serial::Timeout::simpleTimeout(500));
+
+        if(!imu_serial->isOpen()) {
+            imu_serial->open(); // if cant open it will throw exceptions
         }
 
         ROS_INFO("Imu serial succefully opened");
     } catch (const std::exception& err) {
-        ROS_ERROR(err.what());
+        printf("%s\n", err.what());
         ROS_INFO("Failed to open imu serial port");
         return -1;
     }
@@ -205,18 +221,24 @@ int main(int argc, char *argv[]) {
     global::mag_publisher = std::make_shared<ros::Publisher>(handle.advertise<sensor_msgs::MagneticField>("handsfree/mag", 10));
     ros::Rate loop_rate(300);
 
-    while(!ros::isShuttingDown()) {
-        const size_t buffer_count = imu_serial.available();
+    try {
+        while(!ros::isShuttingDown()) {
+            const size_t buffer_count = imu_serial->available();
 
-        if(buffer_count > 0) {
-            const std::string buffer = imu_serial.read(buffer_count); // char array
-            for(const uint8_t c : buffer) {
-                process_serial_data(c); // idk man, i dont want to pass this everytime. But its only 3 bytes so i think its fine
+            if(buffer_count > 0) {
+                const std::string buffer = imu_serial->read(buffer_count); // char array
+                for(const uint8_t c : buffer) {
+                    process_serial_data(c); // idk man, i dont want to pass this everytime. But its only 3 bytes so i think its fine
+                }
             }
-        }
 
-        loop_rate.sleep();
+            loop_rate.sleep();
+        }
+    } catch (const std::exception& e) {
+        printf("%s\n", e.what());
+        ROS_ERROR("Died : (");
     }
+
     ROS_INFO("Shutting down");
     return 0;
 }
