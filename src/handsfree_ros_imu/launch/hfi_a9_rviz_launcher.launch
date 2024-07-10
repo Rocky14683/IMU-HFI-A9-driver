@@ -1,0 +1,11 @@
+<launch>
+    <arg name="port" default="/dev/ttyUSB0"/>
+    <arg name="gra_norm" default="true"/>
+
+    <node pkg="handsfree_ros_imu" type="hfi_a9_ros" name="imu" output="screen">
+        <param name="imu_port" type="string" value="$(arg port)"/>
+        <param name="gra_normalization"  type = "bool"  value="$(arg gra_norm)"/>
+    </node>
+
+    <node name="rviz" pkg="rviz" type="rviz" args="-d $(find handsfree_ros_imu)/rviz/handsfree_ros_imu.rviz"/>
+</launch>
