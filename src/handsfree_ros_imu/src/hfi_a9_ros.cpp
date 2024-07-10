@@ -85,7 +85,7 @@ static void process_serial_data(uint8_t data) {
         return;
     }
     data_ack_count = 0;
-    const std::array<uint8_t, 2> check_sum_datas = {*(buffer.cend() - 2), *buffer.cend()};
+    const std::array<uint8_t, 2> check_sum_datas = {*(buffer.cend() - 2), *(buffer.cend() - 1)};
     const std::vector<uint8_t> datas(buffer.cbegin() + 2, buffer.cend() - 2);
 
     std::array<float, 3> angular_velocity{};
@@ -105,7 +105,7 @@ static void process_serial_data(uint8_t data) {
         } else {
             ROS_WARN("Failed to calibrate");
         }
-        pub_flag[0] = false;
+        pub_flag.first = false;
     } else if (data_length == 20 && pub_flag.second) {
         //buffer size = 25
         if(checksum(datas, check_sum_datas)) {
@@ -116,7 +116,7 @@ static void process_serial_data(uint8_t data) {
         } else {
             ROS_WARN("Failed to calibrate");
         }
-        pub_flag[1] = false;
+        pub_flag.second = false;
     } else {
         ROS_WARN("Invalid datas");
     }
