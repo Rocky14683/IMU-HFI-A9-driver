@@ -3,6 +3,7 @@
 //
 #include <numeric>
 #include <bits/cmathcalls.h>
+#include <tgmath.h>
 
 #include "ros/ros.h"
 #include "cmath"
@@ -21,18 +22,16 @@ namespace global {
 
 bool checksum(const std::vector<uint8_t>& list_data, const std::array<uint8_t, 2>& check_datas) {
     uint16_t crc = 0xFFFF;
-    for(const char data : list_data) {
-        crc ^= data;// 16 bits xor 8 bits
+    for(const uint8_t data : list_data) {
+        crc ^= data;// 16 bits
         for(int i = 0; i < 8; i++) {
+            crc >>= 1;
             if((crc & 1) != 0) {
-                crc >>= 1;
                 crc ^= 0xA001;
-            } else {
-                crc >>= 1;
             }
         }
     }
-    return ((crc & 0xff) << 8) == (check_datas.at(0) << 8 | check_datas.at(1));
+    return ((crc & 0xff) << 8 + crc >> 8) == (check_datas.at(0) << 8 | check_datas.at(1));
 }
 
 std::vector<float> hex_to_float(const std::vector<uint8_t>& raw_data) {
@@ -154,10 +153,10 @@ static void process_serial_data(uint8_t data) {
     imu_msg.angular_velocity.y = angular_velocity.at(1);
     imu_msg.angular_velocity.z = angular_velocity.at(2);
 
-    float acc_k = static_cast<float>(std::sqrt(std::accumulate(acceleration.begin(), acceleration.end(), 0.0,
-    [](float sum, float val) -> float {
+    float acc_k = std::sqrt(std::accumulate(acceleration.cbegin(), acceleration.cend(), 0.0,
+    [](const float sum, const float val) -> float {
         return sum + val * val;
-    })));
+    }));
 
     if(acc_k == 0) acc_k = 1.f;
 
