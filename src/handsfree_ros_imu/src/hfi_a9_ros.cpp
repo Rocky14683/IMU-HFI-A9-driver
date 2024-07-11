@@ -10,6 +10,8 @@
 #include "sensor_msgs/Imu.h"
 #include "sensor_msgs/MagneticField.h"
 #include "tf2/LinearMath/Quaternion.h"
+#include "tf2/transform_datatypes.h"
+#include "tf/transform_datatypes.h"
 
 #define G (9.8)
 
@@ -19,25 +21,32 @@ namespace global {
     std::shared_ptr<ros::Publisher> mag_publisher;
 };
 
-bool checksum(const std::vector<uint8_t>& list_data, const std::array<uint8_t, 2>& check_datas) {
-    printf("checksum: \n%x, %x\nsize:%lu\n", check_datas.at(0), check_datas.at(1), list_data.size());
+bool checksum(const std::vector<uint8_t>& list_data, const std::array<uint8_t, 2>& check_data) {
     uint16_t crc = 0xFFFF;
-    for(const uint8_t data : list_data) {
-        printf("%x\n", data);
-        crc ^= data;// 16 bits
-        for(int i = 0; i < 8; i++) {
-            crc >>= 1;
-            if((crc & 1) != 0) {
+
+    for (const uint8_t pos : list_data) {
+        crc ^= pos;
+        for (int i = 0; i < 8; ++i) {
+            if (crc & 1) {
+                crc >>= 1;
                 crc ^= 0xA001;
+            } else {
+                crc >>= 1;
             }
         }
     }
-    return (crc & 0xff) << 8 + (crc >> 8) == (check_datas.at(0) << 8 | check_datas.at(1));
+
+    const uint16_t result = ((crc & 0xFF) << 8) | (crc >> 8);
+    const uint16_t check = (check_data[0] << 8) | check_data[1];
+
+    return result == check;
 }
 
-std::vector<float> hex_to_float(const std::vector<uint8_t>& raw_data) {
+std::vector<float> hex_to_float(std::vector<uint8_t> raw_data) {
 
     std::vector<float> vec;
+
+    std::reverse(raw_data.begin(), raw_data.end());
     for(int i = 0; i < raw_data.size(); i+=4) {
         uint32_t data;
         std::memcpy(&data, &raw_data[i], 4);
@@ -56,13 +65,13 @@ std::vector<float> hex_to_float(const std::vector<uint8_t>& raw_data) {
 static void process_serial_data(uint8_t data) {
     static size_t idx = 0;
     static std::pair<bool, bool> pub_flag = {true, true};
-    static size_t data_ack_count = 0;
+    static size_t data_nack_count = 0;
     static std::vector<uint8_t> buffer{};
     sensor_msgs::Imu imu_msg{};
     sensor_msgs::MagneticField mag_msg{};
 
-    if(data_ack_count > 200000) {
-        ROS_ERROR("Data error");
+    if(data_nack_count > 200000) {
+        ROS_ERROR("Data NACK");
         exit(-1);
     }
 
@@ -71,13 +80,13 @@ static void process_serial_data(uint8_t data) {
     buffer.push_back(data);
 
 
-    printf("%lu : %x\n", idx, data);
+    // printf("%lu : %x\n", idx, data);
 
     idx++;
     // start bits[0, 1]: aa 55
     // end bits[last 2 idx]: for checksum
     if(buffer.at(0) != 0xaa) {
-        data_ack_count++;
+        data_nack_count++;
         idx = 0;
         return;
     }
@@ -94,7 +103,7 @@ static void process_serial_data(uint8_t data) {
     if(idx < buffer.at(2) + 5) {
         return;
     }
-    data_ack_count = 0;
+    data_nack_count = 0;
     const std::array<uint8_t, 2> check_sum_datas = {*(buffer.cend() - 2), *(buffer.cend() - 1)};
     const std::vector<uint8_t> datas(buffer.cbegin() + 2, buffer.cend() - 2);
 
@@ -222,6 +231,8 @@ int main(int argc, char *argv[]) {
     ros::Rate loop_rate(300);
 
     try {
+        imu_serial->flush();
+
         while(!ros::isShuttingDown()) {
             const size_t buffer_count = imu_serial->available();
 
